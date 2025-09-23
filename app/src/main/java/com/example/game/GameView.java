@@ -74,9 +74,9 @@ public class GameView extends SurfaceView implements Runnable {
     private Joystick joystick;
     private int joystickPointerId = -1;
 
-    // Attack button
-    private RectF buttonAttack;
-    private Paint buttonPressedPaint, arrowPaint;
+    // Auto Fire
+    private long lastShootTime = 0;
+    private long shootCooldown = 300; // ms, càng nhỏ bắn càng nhanh
 
     // Star power-up
     private Star star;
@@ -122,15 +122,7 @@ public class GameView extends SurfaceView implements Runnable {
     }
 
     private void initPaints() {
-        buttonPressedPaint = new Paint();
-        buttonPressedPaint.setColor(Color.argb(120, 100, 200, 255));
-        buttonPressedPaint.setStyle(Paint.Style.FILL);
-
-        arrowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        arrowPaint.setColor(Color.WHITE);
-        arrowPaint.setTextSize(50);
-        arrowPaint.setTextAlign(Paint.Align.CENTER);
-        arrowPaint.setTypeface(Typeface.DEFAULT_BOLD);
+        // không cần vẽ nút Attack nữa
     }
 
     @Override
@@ -151,7 +143,6 @@ public class GameView extends SurfaceView implements Runnable {
         }
 
         joystick = new Joystick(dp(100), screenHeight - dp(150), dp(80), dp(40));
-        buttonAttack = new RectF(screenWidth - dp(150), screenHeight - dp(150), screenWidth - dp(50), screenHeight - dp(50));
         buttonRestart = new RectF(screenWidth/2f - dp(100), screenHeight/2f + dp(50),
                 screenWidth/2f + dp(100), screenHeight/2f + dp(120));
 
@@ -196,6 +187,13 @@ public class GameView extends SurfaceView implements Runnable {
 
         charX = Math.max(0, Math.min(charX, screenWidth - character.getFrameWidth()));
         charY = Math.max(0, Math.min(charY, screenHeight - character.getFrameHeight()));
+
+        // ==== Auto Fire ====
+        long now = System.currentTimeMillis();
+        if (now - lastShootTime > shootCooldown) {
+            fireProjectile();
+            lastShootTime = now;
+        }
 
         for (int i = projectiles.size() - 1; i >= 0; i--) {
             Projectile p = projectiles.get(i);
@@ -243,7 +241,7 @@ public class GameView extends SurfaceView implements Runnable {
             if (hit) projectiles.remove(i);
         }
 
-        // ==== Character vs Enemy ====
+        // Character vs Enemy
         Rect charRect = new Rect((int)charX, (int)charY,
                 (int)charX + character.getFrameWidth(),
                 (int)charY + character.getFrameHeight());
@@ -265,7 +263,7 @@ public class GameView extends SurfaceView implements Runnable {
             }
         }
 
-        // ==== Enemy vs Star ====
+        // Enemy vs Star
         if (star != null && star.isActive()) {
             for (int i = 0; i < enemies.size(); i++) {
                 Enemy e = enemies.get(i);
@@ -277,10 +275,8 @@ public class GameView extends SurfaceView implements Runnable {
                     enemies.add(new Enemy(getContext(), screenWidth, screenHeight, e.getType()));
                     enemies.get(enemies.size()-1).setPosition(e.getX() - 30, e.getY());
 
-                    // Tắt star
                     star.deactivate();
 
-                    // Respawn lại star sau 3s
                     handler.postDelayed(() -> {
                         if (star != null) star.respawn();
                     }, 3000);
@@ -314,9 +310,6 @@ public class GameView extends SurfaceView implements Runnable {
 
             joystick.draw(canvas, paint);
 
-            canvas.drawRoundRect(buttonAttack,25,25,buttonPressedPaint);
-            canvas.drawText("⚔", buttonAttack.centerX(),buttonAttack.centerY()+15, arrowPaint);
-
             drawSoundIcons(canvas);
             drawPlayerUI(canvas);
 
@@ -330,7 +323,7 @@ public class GameView extends SurfaceView implements Runnable {
                 canvas.drawText("GAME OVER", screenWidth/2f, screenHeight/2f, paint);
 
                 paint.setTextSize(dp(25));
-                canvas.drawRoundRect(buttonRestart, 20, 20, buttonPressedPaint);
+                canvas.drawRoundRect(buttonRestart, 20, 20, paint);
                 canvas.drawText("RESTART", buttonRestart.centerX(), buttonRestart.centerY()+10, paint);
             }
 
@@ -436,11 +429,6 @@ public class GameView extends SurfaceView implements Runnable {
 
                 if (iconSfxRect.contains(x, y)) {
                     isSfxOn = !isSfxOn;
-                    return true;
-                }
-
-                if (buttonAttack.contains(x, y)) {
-                    fireProjectile();
                     return true;
                 }
 

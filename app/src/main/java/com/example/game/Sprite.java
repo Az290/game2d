@@ -1,7 +1,10 @@
 package com.example.game;
 
 import android.content.Context;
-import android.graphics.*;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 
 public class Sprite {
     private Bitmap spriteSheet;
@@ -11,32 +14,31 @@ public class Sprite {
     private int currentRow = 0;
     private long lastFrameChangeTime = 0;
     private int frameLengthInMillisecond = 150;
-    private final int ROW_ATTACK = 2;  // row của motion chém kiếm trong sprite sheet
 
-    // Thêm biến để kiểm soát trạng thái animation
-    private boolean isMoving = false;
-    private boolean needsReset = false;
-    private int targetRow = 0;
-
-    // Cache bitmap để tránh vẽ lại liên tục
     private Bitmap[] frameCache;
-    private Matrix transformMatrix;
 
+    // ✅ Constructor cũ để các file khác không bị lỗi
     public Sprite(Context context, int resId, int rows, int cols) {
-        spriteSheet = BitmapFactory.decodeResource(context.getResources(), resId);
+        this(context, resId, rows, cols, 1.0f); // mặc định scaleFactor = 1.0 (kích thước gốc)
+    }
+
+    // ✅ Constructor mới có scaleFactor
+    public Sprite(Context context, int resId, int rows, int cols, float scaleFactor) {
+        // Load ảnh gốc
+        Bitmap original = BitmapFactory.decodeResource(context.getResources(), resId);
+
+        // Resize sprite sheet
+        int newW = (int)(original.getWidth() * scaleFactor);
+        int newH = (int)(original.getHeight() * scaleFactor);
+        spriteSheet = Bitmap.createScaledBitmap(original, newW, newH, true);
+
         this.rows = rows;
         this.cols = cols;
+        frameWidth = spriteSheet.getWidth() / cols;
+        frameHeight = spriteSheet.getHeight() / rows;
 
-        if (spriteSheet != null && cols > 0 && rows > 0) {
-            frameWidth = spriteSheet.getWidth() / cols;
-            frameHeight = spriteSheet.getHeight() / rows;
-
-            // Khởi tạo cache và matrix
-            initializeCache();
-            transformMatrix = new Matrix();
-        } else {
-            frameWidth = frameHeight = 0;
-        }
+        // Cắt frame và cache
+        initializeCache();
     }
 
     private void initializeCache() {
@@ -53,31 +55,7 @@ public class Sprite {
         }
     }
 
-    public void setRow(int row) {
-        if (row >= 0 && row < rows) {
-            if (currentRow != row) {
-                targetRow = row;
-                needsReset = true;
-                isMoving = (row != 0);
-            }
-        }
-    }
-
-    public void resetAnimation() {
-        if (needsReset) {
-            currentFrame = 0;
-            currentRow = targetRow;
-            lastFrameChangeTime = System.currentTimeMillis();
-            needsReset = false;
-        }
-    }
-
     public void update() {
-        if (!isMoving && currentRow == 0) {
-            currentFrame = 0;
-            return;
-        }
-
         long now = System.currentTimeMillis();
         if (now - lastFrameChangeTime > frameLengthInMillisecond) {
             currentFrame = (currentFrame + 1) % cols;
@@ -86,43 +64,29 @@ public class Sprite {
     }
 
     public void draw(Canvas canvas, int x, int y, Paint paint) {
-        if (frameCache == null || frameWidth == 0 || frameHeight == 0) return;
-
-        // Sử dụng frame từ cache
         int index = currentRow * cols + currentFrame;
         if (index >= 0 && index < frameCache.length) {
-            transformMatrix.reset();
-            transformMatrix.postTranslate(x, y);
-
-            canvas.drawBitmap(frameCache[index], transformMatrix, paint);
+            canvas.drawBitmap(frameCache[index], x, y, paint);
         }
     }
 
-    public int getFrameWidth() {
-        return frameWidth;
-    }
+    public int getFrameWidth() { return frameWidth; }
+    public int getFrameHeight() { return frameHeight; }
 
-    public int getFrameHeight() {
-        return frameHeight;
-    }
+    public void setRow(int row) { currentRow = row; }
 
-    public int getCurrentRow() {
-        return currentRow;
-    }
-
-    public void stopAnimation() {
-        isMoving = false;
+    // ✅ Thêm lại resetAnimation
+    public void resetAnimation() {
         currentFrame = 0;
-        needsReset = true;
+        lastFrameChangeTime = System.currentTimeMillis();
     }
 
-    // Thêm phương thức để giải phóng bộ nhớ
+    // ✅ Thêm dispose để giải phóng bộ nhớ
     public void dispose() {
-        if (spriteSheet != null) {
+        if (spriteSheet != null && !spriteSheet.isRecycled()) {
             spriteSheet.recycle();
             spriteSheet = null;
         }
-
         if (frameCache != null) {
             for (Bitmap frame : frameCache) {
                 if (frame != null && !frame.isRecycled()) {
