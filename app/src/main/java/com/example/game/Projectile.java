@@ -9,9 +9,11 @@ public class Projectile {
     private int width = 12, height = 24;
     private int damage = 25; // sát thương mỗi viên
 
-    public Projectile(float x, float y) {
+    // Sửa constructor để nhận damage từ player
+    public Projectile(float x, float y, int damage) {
         this.x = x;
         this.y = y;
+        this.damage = damage;
     }
 
     public void update() {

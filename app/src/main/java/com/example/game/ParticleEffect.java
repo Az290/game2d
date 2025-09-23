@@ -48,6 +48,7 @@ public class ParticleEffect {
         int color;
         float size;
 
+
         Particle(float x, float y) {
             this.x = x;
             this.y = y;

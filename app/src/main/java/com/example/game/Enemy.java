@@ -13,6 +13,7 @@ public class Enemy {
 
     private int maxHp = 100;
     private int hp;
+    private int xpValue = 20; // XP nhận được khi tiêu diệt
 
     public Enemy(Context context, int screenWidth, int screenHeight) {
         this.screenWidth = screenWidth;
@@ -61,4 +62,5 @@ public class Enemy {
 
     public float getX() { return x; }
     public float getY() { return y; }
+    public int getXPValue() { return xpValue; }
 }
