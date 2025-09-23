@@ -7,6 +7,7 @@ import android.media.SoundPool;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import android.os.Handler;
 
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.MediaItem;
@@ -30,11 +31,9 @@ public class GameView extends SurfaceView implements Runnable {
     private int screenWidth = 0, screenHeight = 0;
     private boolean initialized = false;
 
-    // Frame timing
     private static final long STEP_NS = 16_666_667L;
     private long prevNs, accNs;
 
-    // Background scroll
     private float bgX = 0;
     private float baseBgSpeed = 2;
 
@@ -46,32 +45,42 @@ public class GameView extends SurfaceView implements Runnable {
     private List<Explosion> explosions = new ArrayList<>();
     private List<LevelUpEffect> levelEffects = new ArrayList<>();
 
-    // Player system dùng GamePlayer
+    // Player system
     private GamePlayer player;
     private Paint levelTextPaint, xpBarBgPaint, xpBarFillPaint;
 
-    // Sound effect
+    // Player HP
+    private int playerHp = 100;
+    private int maxPlayerHp = 100;
+    private boolean isGameOver = false;
+    private RectF buttonRestart;
+
+    // Sound
     private SoundPool soundPool;
     private int shootSoundId;
     private int explosionSoundId;
 
-    // BGM bằng ExoPlayer
+    // BGM
     private ExoPlayer exoPlayer;
 
-    // Icon âm thanh
+    // Icons
     private Bitmap iconVolumeOn, iconVolumeOff;
     private Bitmap iconSfxOn, iconSfxOff;
     private RectF iconVolumeRect, iconSfxRect;
-    private boolean isAllSoundOn = true; // trạng thái âm thanh tổng (left icon)
-    private boolean isSfxOn = true; // trạng thái hiệu ứng (right icon)
+    private boolean isAllSoundOn = true;
+    private boolean isSfxOn = true;
 
     // Joystick
     private Joystick joystick;
-    private int joystickPointerId = -1; // -1 = chưa có ngón nào điều khiển joystick
+    private int joystickPointerId = -1;
 
     // Attack button
     private RectF buttonAttack;
     private Paint buttonPressedPaint, arrowPaint;
+
+    // Star power-up
+    private Star star;
+    private Handler handler = new Handler();
 
     public GameView(Context context) {
         super(context);
@@ -79,13 +88,11 @@ public class GameView extends SurfaceView implements Runnable {
         paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         paint.setFilterBitmap(true);
 
-        // Background + player sprite
         background = BitmapFactory.decodeResource(getResources(), R.drawable.bg);
-        character = new Sprite(context, R.drawable.character, 1, 8); // plane sprite: 1 row, 8 frames
+        character = new Sprite(context, R.drawable.character, 1, 8);
 
         initPaints();
 
-        // Khởi tạo player system
         player = new GamePlayer();
         levelTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         levelTextPaint.setColor(Color.WHITE);
@@ -97,12 +104,10 @@ public class GameView extends SurfaceView implements Runnable {
         xpBarFillPaint = new Paint();
         xpBarFillPaint.setColor(Color.rgb(0, 230, 118));
 
-        // Load sound effect bằng SoundPool
         soundPool = new SoundPool(5, AudioManager.STREAM_MUSIC, 0);
         shootSoundId = soundPool.load(context, R.raw.shoot, 1);
         explosionSoundId = soundPool.load(context, R.raw.explosion, 1);
 
-        // Khởi tạo ExoPlayer
         exoPlayer = new ExoPlayer.Builder(context).build();
         MediaItem music = MediaItem.fromUri("android.resource://" + context.getPackageName() + "/" + R.raw.bg_music);
         exoPlayer.setMediaItem(music);
@@ -110,7 +115,6 @@ public class GameView extends SurfaceView implements Runnable {
         exoPlayer.prepare();
         exoPlayer.setVolume(1.0f);
 
-        // Load icon âm thanh
         iconVolumeOn = BitmapFactory.decodeResource(getResources(), R.drawable.ic_volume_on);
         iconVolumeOff = BitmapFactory.decodeResource(getResources(), R.drawable.ic_volume_off);
         iconSfxOn = BitmapFactory.decodeResource(getResources(), R.drawable.ic_sfx_on);
@@ -146,16 +150,17 @@ public class GameView extends SurfaceView implements Runnable {
             character.resetAnimation();
         }
 
-        // Setup joystick
         joystick = new Joystick(dp(100), screenHeight - dp(150), dp(80), dp(40));
-
-        // Attack button
         buttonAttack = new RectF(screenWidth - dp(150), screenHeight - dp(150), screenWidth - dp(50), screenHeight - dp(50));
+        buttonRestart = new RectF(screenWidth/2f - dp(100), screenHeight/2f + dp(50),
+                screenWidth/2f + dp(100), screenHeight/2f + dp(120));
 
-        enemies.add(new Enemy(getContext(), screenWidth, screenHeight));
-        enemies.add(new Enemy(getContext(), screenWidth, screenHeight));
+        enemies.add(new Enemy(getContext(), screenWidth, screenHeight, 0));
+        enemies.add(new Enemy(getContext(), screenWidth, screenHeight, 1));
+        enemies.add(new Enemy(getContext(), screenWidth, screenHeight, 2));
 
-        // Vị trí icon âm thanh
+        star = new Star(getContext(), screenWidth, screenHeight);
+
         iconVolumeRect = new RectF(20, 20, 20 + dp(50), 20 + dp(50));
         iconSfxRect = new RectF(screenWidth - dp(70), 20, screenWidth - 20, 20 + dp(50));
     }
@@ -178,13 +183,11 @@ public class GameView extends SurfaceView implements Runnable {
     }
 
     private void update() {
-        if (!initialized) return;
+        if (!initialized || isGameOver) return;
 
-        // Background scroll
         bgX -= baseBgSpeed;
         if (bgX <= -screenWidth) bgX += screenWidth;
 
-        // Player movement
         speedX = joystick.getActuatorX() * 5;
         speedY = joystick.getActuatorY() * 5;
         charX += speedX;
@@ -194,29 +197,25 @@ public class GameView extends SurfaceView implements Runnable {
         charX = Math.max(0, Math.min(charX, screenWidth - character.getFrameWidth()));
         charY = Math.max(0, Math.min(charY, screenHeight - character.getFrameHeight()));
 
-        // Update projectiles
         for (int i = projectiles.size() - 1; i >= 0; i--) {
             Projectile p = projectiles.get(i);
             p.update();
             if (!p.isActive()) projectiles.remove(i);
         }
 
-        // Update enemies
         for (Enemy e : enemies) e.update();
 
-        // Update explosions
         for (int i = explosions.size() - 1; i >= 0; i--) {
             explosions.get(i).update();
             if (explosions.get(i).isFinished()) explosions.remove(i);
         }
 
-        // Update level up effects
         for (int i = levelEffects.size() - 1; i >= 0; i--) {
             levelEffects.get(i).update();
             if (levelEffects.get(i).isFinished()) levelEffects.remove(i);
         }
 
-        // Collision check
+        // Projectile vs Enemy
         for (int i = projectiles.size() - 1; i >= 0; i--) {
             Projectile p = projectiles.get(i);
             Rect pRect = p.getRect();
@@ -230,7 +229,6 @@ public class GameView extends SurfaceView implements Runnable {
                         explosions.add(new Explosion(getContext(), R.drawable.explosion_sheet, e.getX(), e.getY(), 9));
                         if (isAllSoundOn && isSfxOn) soundPool.play(explosionSoundId, 1,1,0,0,1);
 
-                        // XP gain
                         boolean leveledUp = player.addXP(e.getXPValue());
                         if (leveledUp) {
                             levelEffects.add(new LevelUpEffect(
@@ -243,6 +241,52 @@ public class GameView extends SurfaceView implements Runnable {
                 }
             }
             if (hit) projectiles.remove(i);
+        }
+
+        // ==== Character vs Enemy ====
+        Rect charRect = new Rect((int)charX, (int)charY,
+                (int)charX + character.getFrameWidth(),
+                (int)charY + character.getFrameHeight());
+
+        for (Enemy e : enemies) {
+            if (Rect.intersects(charRect, e.getRect())) {
+                if (isAllSoundOn && isSfxOn) {
+                    soundPool.play(explosionSoundId, 1,1,0,0,1);
+                }
+
+                playerHp -= 20;
+                e.reset();
+
+                if (playerHp <= 0) {
+                    playerHp = 0;
+                    isGameOver = true;
+                    isPlaying = false;
+                }
+            }
+        }
+
+        // ==== Enemy vs Star ====
+        if (star != null && star.isActive()) {
+            for (int i = 0; i < enemies.size(); i++) {
+                Enemy e = enemies.get(i);
+                if (Rect.intersects(star.getRect(), e.getRect())) {
+                    // Nhân bản enemy → thêm 2 con nữa
+                    enemies.add(new Enemy(getContext(), screenWidth, screenHeight, e.getType()));
+                    enemies.get(enemies.size()-1).setPosition(e.getX() + 30, e.getY());
+
+                    enemies.add(new Enemy(getContext(), screenWidth, screenHeight, e.getType()));
+                    enemies.get(enemies.size()-1).setPosition(e.getX() - 30, e.getY());
+
+                    // Tắt star
+                    star.deactivate();
+
+                    // Respawn lại star sau 3s
+                    handler.postDelayed(() -> {
+                        if (star != null) star.respawn();
+                    }, 3000);
+                    break;
+                }
+            }
         }
     }
 
@@ -266,18 +310,29 @@ public class GameView extends SurfaceView implements Runnable {
             for (Explosion ex : explosions) ex.draw(canvas, paint);
             for (LevelUpEffect effect : levelEffects) effect.draw(canvas, paint);
 
-            // Draw joystick
+            if (star != null) star.draw(canvas, paint);
+
             joystick.draw(canvas, paint);
 
-            // Attack button
             canvas.drawRoundRect(buttonAttack,25,25,buttonPressedPaint);
             canvas.drawText("⚔", buttonAttack.centerX(),buttonAttack.centerY()+15, arrowPaint);
 
-            // Sound icons
             drawSoundIcons(canvas);
-
-            // Player UI
             drawPlayerUI(canvas);
+
+            if (isGameOver) {
+                paint.setColor(Color.argb(180, 0, 0, 0));
+                canvas.drawRect(0, 0, screenWidth, screenHeight, paint);
+
+                paint.setColor(Color.WHITE);
+                paint.setTextSize(dp(40));
+                paint.setTextAlign(Paint.Align.CENTER);
+                canvas.drawText("GAME OVER", screenWidth/2f, screenHeight/2f, paint);
+
+                paint.setTextSize(dp(25));
+                canvas.drawRoundRect(buttonRestart, 20, 20, buttonPressedPaint);
+                canvas.drawText("RESTART", buttonRestart.centerX(), buttonRestart.centerY()+10, paint);
+            }
 
         } finally {
             if (canvas != null) holder.unlockCanvasAndPost(canvas);
@@ -289,18 +344,29 @@ public class GameView extends SurfaceView implements Runnable {
 
         if (player.isMaxLevel()) {
             canvas.drawText("MAX LEVEL", dp(80), dp(80), levelTextPaint);
-            return;
+        } else {
+            float xpBarWidth = dp(150);
+            float xpBarHeight = dp(10);
+            float xpBarX = dp(80);
+            float xpBarY = dp(75);
+            canvas.drawRect(xpBarX, xpBarY, xpBarX + xpBarWidth, xpBarY + xpBarHeight, xpBarBgPaint);
+
+            float progress = player.getXPProgress();
+            canvas.drawRect(xpBarX, xpBarY, xpBarX + xpBarWidth * progress, xpBarY + xpBarHeight, xpBarFillPaint);
         }
 
-        float xpBarWidth = dp(150);
-        float xpBarHeight = dp(10);
-        float xpBarX = dp(80);
-        float xpBarY = dp(75);
+        canvas.drawText("HP: " + playerHp, dp(20), dp(120), levelTextPaint);
+        float hpBarWidth = dp(150);
+        float hpBarHeight = dp(12);
+        float hpBarX = dp(80);
+        float hpBarY = dp(110);
 
-        canvas.drawRect(xpBarX, xpBarY, xpBarX + xpBarWidth, xpBarY + xpBarHeight, xpBarBgPaint);
+        paint.setColor(Color.RED);
+        canvas.drawRect(hpBarX, hpBarY, hpBarX + hpBarWidth, hpBarY + hpBarHeight, paint);
 
-        float progress = player.getXPProgress();
-        canvas.drawRect(xpBarX, xpBarY, xpBarX + xpBarWidth * progress, xpBarY + xpBarHeight, xpBarFillPaint);
+        paint.setColor(Color.GREEN);
+        float hpProgress = (float)playerHp / maxPlayerHp;
+        canvas.drawRect(hpBarX, hpBarY, hpBarX + hpBarWidth * hpProgress, hpBarY + hpBarHeight, paint);
     }
 
     private void drawSoundIcons(Canvas canvas) {
@@ -344,6 +410,16 @@ public class GameView extends SurfaceView implements Runnable {
 
         float x = event.getX(pointerIndex);
         float y = event.getY(pointerIndex);
+
+        if (isGameOver) {
+            if (action == MotionEvent.ACTION_DOWN) {
+                if (buttonRestart.contains(x, y)) {
+                    resetGame();
+                    return true;
+                }
+            }
+            return true;
+        }
 
         switch (action) {
             case MotionEvent.ACTION_DOWN:
@@ -402,7 +478,26 @@ public class GameView extends SurfaceView implements Runnable {
         return true;
     }
 
+    private void resetGame() {
+        playerHp = maxPlayerHp;
+        isGameOver = false;
+        player = new GamePlayer();
+        projectiles.clear();
+        enemies.clear();
+        enemies.add(new Enemy(getContext(), screenWidth, screenHeight, 0));
+        enemies.add(new Enemy(getContext(), screenWidth, screenHeight, 1));
+        enemies.add(new Enemy(getContext(), screenWidth, screenHeight, 2));
+        explosions.clear();
+        levelEffects.clear();
+        star.respawn();
+
+        isPlaying = true;
+        gameThread = new Thread(this);
+        gameThread.start();
+    }
+
     public void resume() {
+        if (isGameOver) return;
         isPlaying = true;
         gameThread = new Thread(this);
         gameThread.start();
