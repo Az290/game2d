@@ -14,6 +14,7 @@ import com.google.android.exoplayer2.Player;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 
 public class GameView extends SurfaceView implements Runnable {
     private Thread gameThread;
@@ -40,11 +41,11 @@ public class GameView extends SurfaceView implements Runnable {
 
     // Entities
     private List<Projectile> projectiles = new ArrayList<>();
-    private List<Enemy> enemies = new ArrayList<>();
     private List<Explosion> explosions = new ArrayList<>();
     private List<LevelUpEffect> levelEffects = new ArrayList<>();
     private List<Missile> missiles = new ArrayList<>();
     private List<Laser> lasers = new ArrayList<>();
+    private List<Item> items = new ArrayList<>();
 
     // Player system
     private GamePlayer player;
@@ -81,19 +82,14 @@ public class GameView extends SurfaceView implements Runnable {
 
     // Star power-up
     private Star star;
-    private Handler handler = new Handler();
-
-    // Attack Buttons
-    private RectF missileButtonRect;
-    private RectF laserButtonRect;
 
     // Defense
     private Shield shield = new Shield();
     private ArmorBuff armorBuff = new ArmorBuff();
     private Barrier barrier = new Barrier();
-    private RectF shieldButtonRect;
-    private RectF armorButtonRect;
-    private RectF barrierButtonRect;
+
+    // WaveManager
+    private WaveManager waveManager;
 
     public GameView(Context context) {
         super(context);
@@ -130,6 +126,7 @@ public class GameView extends SurfaceView implements Runnable {
         iconVolumeOff = BitmapFactory.decodeResource(getResources(), R.drawable.ic_volume_off);
         iconSfxOn = BitmapFactory.decodeResource(getResources(), R.drawable.ic_sfx_on);
         iconSfxOff = BitmapFactory.decodeResource(getResources(), R.drawable.ic_sfx_off);
+        waveManager = new WaveManager(context, getWidth()>0?getWidth():1080, getHeight()>0?getHeight():1920);
     }
 
     @Override
@@ -153,55 +150,15 @@ public class GameView extends SurfaceView implements Runnable {
         buttonRestart = new RectF(screenWidth/2f - dp(100), screenHeight/2f + dp(50),
                 screenWidth/2f + dp(100), screenHeight/2f + dp(120));
 
-        enemies.add(new Enemy(getContext(), screenWidth, screenHeight, 0));
-        enemies.add(new Enemy(getContext(), screenWidth, screenHeight, 1));
-        enemies.add(new Enemy(getContext(), screenWidth, screenHeight, 2));
-
         star = new Star(getContext(), screenWidth, screenHeight);
 
         iconVolumeRect = new RectF(20, 20, 20 + dp(50), 20 + dp(50));
         iconSfxRect = new RectF(screenWidth - dp(70), 20, screenWidth - 20, 20 + dp(50));
 
-        float btnSize = dp(70);
-        float padding = dp(20);
-
-        // Defense row (góc phải trên)
-        shieldButtonRect = new RectF(
-                screenWidth - 3*btnSize - 3*padding,
-                padding,
-                screenWidth - 2*btnSize - 3*padding,
-                padding + btnSize
-        );
-
-        armorButtonRect = new RectF(
-                screenWidth - 2*btnSize - 2*padding,
-                padding,
-                screenWidth - btnSize - 2*padding,
-                padding + btnSize
-        );
-
-        barrierButtonRect = new RectF(
-                screenWidth - btnSize - padding,
-                padding,
-                screenWidth - padding,
-                padding + btnSize
-        );
-
-        // Attack row (ngay bên dưới)
-        laserButtonRect = new RectF(
-                screenWidth - 2*btnSize - 2*padding,
-                padding + btnSize + padding,
-                screenWidth - btnSize - 2*padding,
-                padding + 2*btnSize + padding
-        );
-
-        missileButtonRect = new RectF(
-                screenWidth - btnSize - padding,
-                padding + btnSize + padding,
-                screenWidth - padding,
-                padding + 2*btnSize + padding
-        );
+        // init wave system
+        waveManager = new WaveManager(getContext(), screenWidth, screenHeight);
     }
+
     @Override
     public void run() {
         prevNs = System.nanoTime();
@@ -221,7 +178,6 @@ public class GameView extends SurfaceView implements Runnable {
     private void update() {
         if (!initialized || isGameOver) return;
 
-        // background
         bgX -= baseBgSpeed;
         if (bgX <= -screenWidth) bgX += screenWidth;
 
@@ -247,8 +203,8 @@ public class GameView extends SurfaceView implements Runnable {
             p.update(); if (!p.isActive()) projectiles.remove(i);
         }
 
-        // Enemies
-        for (Enemy e: enemies) e.update();
+        // Wave update
+        waveManager.update();
 
         // Explosions
         for (int i=explosions.size()-1; i>=0; i--) {
@@ -262,13 +218,26 @@ public class GameView extends SurfaceView implements Runnable {
             if (levelEffects.get(i).isFinished()) levelEffects.remove(i);
         }
 
-        // Enemy vs Projectiles
+        // Items update + player eat item
+        for (int i=items.size()-1; i>=0; i--){
+            Item it=items.get(i);
+            it.update();
+            if(!it.isActive()) { items.remove(i); continue; }
+            Rect cRect=new Rect((int)charX,(int)charY,
+                    (int)charX+character.getFrameWidth(),
+                    (int)charY+character.getFrameHeight());
+            if(Rect.intersects(cRect, it.getRect())){
+                activateItem(it.getType());
+                items.remove(i);
+            }
+        }
+
+        // Projectiles vs Enemies
         for (int i=projectiles.size()-1; i>=0; i--) {
             Projectile p = projectiles.get(i);
-            Rect r = p.getRect();
             boolean hit=false;
-            for (Enemy e:enemies) {
-                if (Rect.intersects(r, e.getRect())) {
+            for (Enemy e: waveManager.getActiveEnemies()) {
+                if (Rect.intersects(p.getRect(), e.getRect()) && !e.isDead()) {
                     e.takeDamage(p.getDamage());
                     hit=true;
                     if (e.isDead()) {
@@ -277,30 +246,39 @@ public class GameView extends SurfaceView implements Runnable {
                         if (player.addXP(e.getXPValue())) {
                             levelEffects.add(new LevelUpEffect(charX+character.getFrameWidth()/2, charY));
                         }
-                        e.reset();
+                        if(Math.random()<0.25){
+                            items.add(new Item(new Random().nextInt(5), e.getX(), e.getY()));
+                        }
                     }
                     break;
                 }
-            } if(hit) projectiles.remove(i);
+            }
+            if(hit) projectiles.remove(i);
         }
 
         // Missile
         for (int i=missiles.size()-1; i>=0; i--) {
             Missile m = missiles.get(i);
             Enemy nearest=null; float best=Float.MAX_VALUE;
-            for (Enemy e:enemies){
+            for (Enemy e: waveManager.getActiveEnemies()){
+                if(e.isDead()) continue;
                 float dx=e.getX()-m.getRect().centerX();
                 float dy=e.getY()-m.getRect().centerY();
                 float d=(float)Math.sqrt(dx*dx+dy*dy);
                 if(d<best){nearest=e;best=d;}
             }
             m.update(nearest);
-            if(nearest!=null && Rect.intersects(m.getRect(), nearest.getRect())) {
+            if(nearest!=null && Rect.intersects(m.getRect(), nearest.getRect()) && !nearest.isDead()) {
                 nearest.takeDamage(m.getDamage());
                 explosions.add(new Explosion(getContext(), R.drawable.explosion_sheet, nearest.getX(), nearest.getY(), 9));
                 if(isAllSoundOn&&isSfxOn) soundPool.play(explosionSoundId,1,1,0,0,1);
                 m.deactivate();
-                if(nearest.isDead()){ player.addXP(nearest.getXPValue()); nearest.reset();}
+                if(nearest.isDead()){
+                    player.addXP(nearest.getXPValue());
+                    if(Math.random()<0.25){
+                        items.add(new Item(new Random().nextInt(5), nearest.getX(), nearest.getY()));
+                    }
+                }
             }
             if(!m.isActive()) missiles.remove(i);
         }
@@ -309,11 +287,16 @@ public class GameView extends SurfaceView implements Runnable {
         for (int i=lasers.size()-1; i>=0; i--) {
             Laser l=lasers.get(i); l.update();
             if(!l.isActive()){ lasers.remove(i); continue; }
-            for(Enemy e:enemies) {
-                if(l.hit(e)) {
+            for(Enemy e:waveManager.getActiveEnemies()) {
+                if(!e.isDead() && l.hit(e)) {
                     e.takeDamage(l.getDamage());
                     explosions.add(new Explosion(getContext(), R.drawable.explosion_sheet, e.getX(), e.getY(), 9));
-                    if(e.isDead()){ player.addXP(e.getXPValue()); e.reset();}
+                    if(e.isDead()){
+                        player.addXP(e.getXPValue());
+                        if(Math.random()<0.25){
+                            items.add(new Item(new Random().nextInt(5), e.getX(), e.getY()));
+                        }
+                    }
                 }
             }
         }
@@ -329,9 +312,9 @@ public class GameView extends SurfaceView implements Runnable {
         // Barrier collision
         if (barrier.isActive()) {
             Rect bRect = barrier.getRect();
-            for (Enemy e: enemies) {
-                if (Rect.intersects(bRect, e.getRect())) {
-                    e.reset();
+            for (Enemy e: waveManager.getActiveEnemies()) {
+                if(Rect.intersects(bRect, e.getRect()) && !e.isDead()){
+                    e.takeDamage(999);
                     barrier.deactivate();
                     break;
                 }
@@ -340,8 +323,8 @@ public class GameView extends SurfaceView implements Runnable {
 
         // player vs enemy
         Rect cRect=new Rect((int)charX,(int)charY,(int)charX+character.getFrameWidth(),(int)charY+character.getFrameHeight());
-        for (Enemy e:enemies){
-            if(Rect.intersects(cRect,e.getRect())){
+        for (Enemy e: waveManager.getActiveEnemies()){
+            if(!e.isDead() && Rect.intersects(cRect,e.getRect())){
                 if(shield.isActive()){
                     shield.hit();
                 } else {
@@ -349,8 +332,22 @@ public class GameView extends SurfaceView implements Runnable {
                     dmg = armorBuff.reduceDamage(dmg);
                     playerHp-=dmg;
                 }
-                e.reset();
                 if(playerHp<=0){playerHp=0;isGameOver=true;isPlaying=false;}
+                e.takeDamage(999);
+            }
+
+            // player vs enemy bullets
+            for(EnemyBullet b: e.getBullets()){
+                if(b.isActive() && Rect.intersects(cRect,b.getRect())){
+                    b.active=false;
+                    if(shield.isActive()) shield.hit();
+                    else {
+                        int dmg=10;
+                        dmg = armorBuff.reduceDamage(dmg);
+                        playerHp-=dmg;
+                    }
+                    if(playerHp<=0){playerHp=0;isGameOver=true;isPlaying=false;}
+                }
             }
         }
     }
@@ -371,56 +368,26 @@ public class GameView extends SurfaceView implements Runnable {
             for(Projectile p:projectiles)p.draw(canvas,paint);
             for(Missile m:missiles)m.draw(canvas,paint);
             for(Laser l:lasers)l.draw(canvas,paint);
-            for(Enemy e:enemies)e.draw(canvas,paint);
+            for(Enemy e:waveManager.getActiveEnemies()) e.draw(canvas,paint);
             for(Explosion ex:explosions)ex.draw(canvas,paint);
             for(LevelUpEffect eff:levelEffects)eff.draw(canvas,paint);
+            for(Item it:items) it.draw(canvas,paint);
+
             if (armorBuff.isActive()) {
-                paint.setColor(Color.argb(120, 200, 0, 200)); // tím mờ
-                canvas.drawCircle(
-                        charX + character.getFrameWidth()/2f,
+                paint.setColor(Color.argb(120, 200, 0, 200));
+                canvas.drawCircle(charX + character.getFrameWidth()/2f,
                         charY + character.getFrameHeight()/2f,
-                        character.getFrameWidth(),  // vòng tím bao quanh
-                        paint
-                );
+                        character.getFrameWidth(), paint);
             }
             if(star!=null)star.draw(canvas,paint);
+
             joystick.draw(canvas,paint);
 
-            // Defense
             shield.draw(canvas,paint);
             barrier.draw(canvas,paint);
 
             drawSoundIcons(canvas);
             drawPlayerUI(canvas);
-
-            // Draw buttons
-            paint.setTextAlign(Paint.Align.CENTER);
-            paint.setTextSize(dp(14));
-
-            paint.setColor(Color.CYAN);
-            canvas.drawOval(shieldButtonRect, paint);
-            paint.setColor(Color.BLACK);
-            canvas.drawText("SHIELD", shieldButtonRect.centerX(), shieldButtonRect.centerY()+dp(5), paint);
-
-            paint.setColor(Color.MAGENTA);
-            canvas.drawOval(armorButtonRect, paint);
-            paint.setColor(Color.WHITE);
-            canvas.drawText("ARMOR", armorButtonRect.centerX(), armorButtonRect.centerY()+dp(5), paint);
-
-            paint.setColor(Color.YELLOW);
-            canvas.drawOval(barrierButtonRect, paint);
-            paint.setColor(Color.BLACK);
-            canvas.drawText("WALL", barrierButtonRect.centerX(), barrierButtonRect.centerY()+dp(5), paint);
-
-            paint.setColor(Color.RED);
-            canvas.drawOval(laserButtonRect, paint);
-            paint.setColor(Color.WHITE);
-            canvas.drawText("LASER", laserButtonRect.centerX(), laserButtonRect.centerY()+dp(5), paint);
-
-            paint.setColor(Color.CYAN);
-            canvas.drawOval(missileButtonRect, paint);
-            paint.setColor(Color.BLACK);
-            canvas.drawText("MISSILE", missileButtonRect.centerX(), missileButtonRect.centerY()+dp(5), paint);
 
             if(isGameOver){
                 paint.setColor(Color.argb(180,0,0,0));
@@ -437,65 +404,110 @@ public class GameView extends SurfaceView implements Runnable {
             if(canvas!=null) holder.unlockCanvasAndPost(canvas);
         }
     }
-
     // ==== Fire ====
     private void fireProjectile(){
-        float projX=charX+character.getFrameWidth()/2f-6; float projY=charY-20;
+        float projX=charX+character.getFrameWidth()/2f-6;
+        float projY=charY-20;
         int dmg=player.getCurrentDamage();
         int count=player.getBulletCount();
         if(count==1) projectiles.add(new Projectile(projX,projY,dmg));
-        else if(count==2){ projectiles.add(new Projectile(projX-15,projY,dmg)); projectiles.add(new Projectile(projX+15,projY,dmg));}
-        else { projectiles.add(new Projectile(projX-30,projY,dmg)); projectiles.add(new Projectile(projX,projY,dmg)); projectiles.add(new Projectile(projX+30,projY,dmg));}
+        else if(count==2){
+            projectiles.add(new Projectile(projX-15,projY,dmg));
+            projectiles.add(new Projectile(projX+15,projY,dmg));
+        }
+        else {
+            projectiles.add(new Projectile(projX-30,projY,dmg));
+            projectiles.add(new Projectile(projX,projY,dmg));
+            projectiles.add(new Projectile(projX+30,projY,dmg));
+        }
         if(isAllSoundOn&&isSfxOn) soundPool.play(shootSoundId,1,1,0,0,1);
     }
+
     private void fireMissile(){
-        float mx=charX+character.getFrameWidth()/2f; float my=charY;
+        float mx=charX+character.getFrameWidth()/2f;
+        float my=charY;
         missiles.add(new Missile(mx,my));
     }
+
     private void fireLaser(){
-        float lx=charX+character.getFrameWidth()/2f; float ly=charY;
+        float lx=charX+character.getFrameWidth()/2f;
+        float ly=charY;
         lasers.add(new Laser(lx,ly,screenHeight));
+    }
+
+    // ==== Activated when eating item ====
+    private void activateItem(int type){
+        switch(type){
+            case Item.TYPE_MISSILE: fireMissile(); break;
+            case Item.TYPE_LASER: fireLaser(); break;
+            case Item.TYPE_SHIELD:
+                shield.activate(charX+character.getFrameWidth()/2,
+                        charY+character.getFrameHeight()/2,
+                        character.getFrameWidth());
+                break;
+            case Item.TYPE_ARMOR:
+                armorBuff.activate();
+                break;
+            case Item.TYPE_BARRIER:
+                barrier.activate(charX+character.getFrameWidth()/2, charY);
+                break;
+        }
     }
 
     @Override
     public boolean onTouchEvent(MotionEvent event){
-        if(!initialized)return true;
+        if(!initialized) return true;
         int action=event.getActionMasked();
         int pointerIndex=event.getActionIndex();
-        float x=event.getX(pointerIndex); float y=event.getY(pointerIndex);
+        float x=event.getX(pointerIndex);
+        float y=event.getY(pointerIndex);
 
-        if(isGameOver && action==MotionEvent.ACTION_DOWN && buttonRestart.contains(x,y)){ resetGame(); return true; }
+        if(isGameOver && action==MotionEvent.ACTION_DOWN && buttonRestart.contains(x,y)){
+            resetGame();
+            return true;
+        }
 
         switch(action){
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN:{
-                if(iconVolumeRect.contains(x,y)){ isAllSoundOn=!isAllSoundOn;
-                    if(isAllSoundOn){ if(exoPlayer!=null&&!exoPlayer.isPlaying()) exoPlayer.play();}
-                    else{ if(exoPlayer!=null&&exoPlayer.isPlaying()) exoPlayer.pause(); }
-                    return true; }
-                if(iconSfxRect.contains(x,y)){ isSfxOn=!isSfxOn; return true; }
-                if(joystick.isPressed(x,y)){ joystick.setPressed(true); joystickPointerId=event.getPointerId(pointerIndex); joystick.setActuator(x,y); }
-
-                if(missileButtonRect.contains(x,y)){ fireMissile(); return true; }
-                if(laserButtonRect.contains(x,y)){ fireLaser(); return true; }
-                if(shieldButtonRect.contains(x,y)){ shield.activate(charX+character.getFrameWidth()/2, charY+character.getFrameHeight()/2, character.getFrameWidth()); return true; }
-                if(armorButtonRect.contains(x,y)){ armorBuff.activate(); return true; }
-                if(barrierButtonRect.contains(x,y)){ barrier.activate(charX+character.getFrameWidth()/2, charY); return true; }
-
+                if(iconVolumeRect.contains(x,y)){
+                    isAllSoundOn=!isAllSoundOn;
+                    if(isAllSoundOn){
+                        if(exoPlayer!=null&&!exoPlayer.isPlaying()) exoPlayer.play();
+                    } else {
+                        if(exoPlayer!=null&&exoPlayer.isPlaying()) exoPlayer.pause();
+                    }
+                    return true;
+                }
+                if(iconSfxRect.contains(x,y)){
+                    isSfxOn=!isSfxOn;
+                    return true;
+                }
+                if(joystick.isPressed(x,y)){
+                    joystick.setPressed(true);
+                    joystickPointerId=event.getPointerId(pointerIndex);
+                    joystick.setActuator(x,y);
+                }
                 break;
             }
             case MotionEvent.ACTION_MOVE:{
                 if(joystickPointerId!=-1){
                     int idx=event.findPointerIndex(joystickPointerId);
-                    if(idx!=-1) joystick.setActuator(event.getX(idx), event.getY(idx));
-                } break;
+                    if(idx!=-1){
+                        joystick.setActuator(event.getX(idx), event.getY(idx));
+                    }
+                }
+                break;
             }
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_POINTER_UP:
             case MotionEvent.ACTION_CANCEL:{
                 if(event.getPointerId(pointerIndex)==joystickPointerId){
-                    joystick.setPressed(false);joystick.resetActuator();joystickPointerId=-1;
-                } break;
+                    joystick.setPressed(false);
+                    joystick.resetActuator();
+                    joystickPointerId=-1;
+                }
+                break;
             }
         }
         return true;
@@ -503,20 +515,29 @@ public class GameView extends SurfaceView implements Runnable {
 
     private void drawSoundIcons(Canvas canvas) {
         Bitmap musicIcon = isAllSoundOn ? iconVolumeOn : iconVolumeOff;
-        Rect musicDst = new Rect((int) iconVolumeRect.left,(int) iconVolumeRect.top,(int) iconVolumeRect.right,(int) iconVolumeRect.bottom);
+        Rect musicDst = new Rect((int) iconVolumeRect.left,(int) iconVolumeRect.top,
+                (int) iconVolumeRect.right,(int) iconVolumeRect.bottom);
         canvas.drawBitmap(musicIcon,null,musicDst,paint);
+
         Bitmap sfxIcon = isSfxOn ? iconSfxOn : iconSfxOff;
-        Rect sfxDst = new Rect((int) iconSfxRect.left,(int) iconSfxRect.top,(int) iconSfxRect.right,(int) iconSfxRect.bottom);
+        Rect sfxDst = new Rect((int) iconSfxRect.left,(int) iconSfxRect.top,
+                (int) iconSfxRect.right,(int) iconSfxRect.bottom);
         canvas.drawBitmap(sfxIcon,null,sfxDst,paint);
     }
 
     private void drawPlayerUI(Canvas canvas) {
+        canvas.drawText("Wave: "+waveManager.getCurrentWave(), dp(20), dp(50), levelTextPaint);
         canvas.drawText("LV: "+player.getLevel(), dp(20), dp(80), levelTextPaint);
-        if(player.isMaxLevel()) canvas.drawText("MAX LEVEL", dp(80), dp(80), levelTextPaint);
-        else{ float xpBarWidth=dp(150), xpBarHeight=dp(10), xpBarX=dp(80), xpBarY=dp(75);
+
+        if(player.isMaxLevel()){
+            canvas.drawText("MAX LEVEL", dp(80), dp(80), levelTextPaint);
+        } else {
+            float xpBarWidth=dp(150), xpBarHeight=dp(10), xpBarX=dp(80), xpBarY=dp(75);
             canvas.drawRect(xpBarX,xpBarY,xpBarX+xpBarWidth, xpBarY+xpBarHeight,xpBarBgPaint);
             float progress=player.getXPProgress();
-            canvas.drawRect(xpBarX,xpBarY,xpBarX+xpBarWidth*progress,xpBarY+xpBarHeight,xpBarFillPaint);}
+            canvas.drawRect(xpBarX,xpBarY,xpBarX+xpBarWidth*progress,xpBarY+xpBarHeight,xpBarFillPaint);
+        }
+
         canvas.drawText("HP: "+playerHp, dp(20), dp(120), levelTextPaint);
         float hpBarWidth=dp(150), hpBarHeight=dp(12), hpBarX=dp(80), hpBarY=dp(110);
         paint.setColor(Color.RED);
@@ -526,34 +547,95 @@ public class GameView extends SurfaceView implements Runnable {
         canvas.drawRect(hpBarX,hpBarY,hpBarX+hpBarWidth*hpProg,hpBarY+hpBarHeight,paint);
     }
 
-    private void resetGame(){ playerHp=maxPlayerHp;isGameOver=false;player=new GamePlayer();
-        projectiles.clear();missiles.clear();lasers.clear();enemies.clear();
-        enemies.add(new Enemy(getContext(),screenWidth,screenHeight,0));
-        enemies.add(new Enemy(getContext(),screenWidth,screenHeight,1));
-        enemies.add(new Enemy(getContext(),screenWidth,screenHeight,2));
-        explosions.clear();levelEffects.clear();star.respawn();isPlaying=true;
-        gameThread=new Thread(this);gameThread.start(); }
+    private void resetGame(){
+        playerHp=maxPlayerHp;
+        isGameOver=false;
+        player=new GamePlayer();
+        projectiles.clear();
+        missiles.clear();
+        lasers.clear();
+        explosions.clear();
+        levelEffects.clear();
+        items.clear();
+        star.respawn();
+        waveManager = new WaveManager(getContext(), screenWidth, screenHeight);
+        isPlaying=true;
+        gameThread=new Thread(this);
+        gameThread.start();
+    }
 
-    public void resume(){ if(isGameOver)return; isPlaying=true; gameThread=new Thread(this);gameThread.start(); if(exoPlayer!=null&&!exoPlayer.isPlaying()) exoPlayer.play(); }
-    public void pause(){ isPlaying=false; try{ if(gameThread!=null) gameThread.join(); }catch(InterruptedException ignored){} if(exoPlayer!=null&&exoPlayer.isPlaying()) exoPlayer.pause(); }
-    public void release(){ if(background!=null&&!background.isRecycled()){background.recycle(); background=null;} if(character!=null){character.dispose();character=null;} if(soundPool!=null){soundPool.release();soundPool=null;} if(exoPlayer!=null){exoPlayer.release();exoPlayer=null;} }
+    public void resume(){
+        if(isGameOver) return;
+        isPlaying=true;
+        gameThread=new Thread(this);
+        gameThread.start();
+        if(exoPlayer!=null&&!exoPlayer.isPlaying()) exoPlayer.play();
+    }
 
-    // joystick
+    public void pause(){
+        isPlaying=false;
+        try{ if(gameThread!=null) gameThread.join(); }
+        catch(InterruptedException ignored){}
+        if(exoPlayer!=null&&exoPlayer.isPlaying()) exoPlayer.pause();
+    }
+
+    public void release(){
+        if(background!=null&&!background.isRecycled()){
+            background.recycle();
+            background=null;
+        }
+        if(character!=null){
+            character.dispose();
+            character=null;
+        }
+        if(soundPool!=null){
+            soundPool.release();
+            soundPool=null;
+        }
+        if(exoPlayer!=null){
+            exoPlayer.release();
+            exoPlayer=null;
+        }
+    }
+
+    // =========== Joystick =============
     private class Joystick{
-        private float centerX,centerY,baseRadius,hatRadius, actuatorX=0,actuatorY=0;
+        private float centerX,centerY,baseRadius,hatRadius,
+                actuatorX=0,actuatorY=0;
         private boolean isPressed=false;
-        public Joystick(float cx,float cy,float br,float hr){centerX=cx;centerY=cy;baseRadius=br;hatRadius=hr;}
+
+        public Joystick(float cx,float cy,float br,float hr){
+            centerX=cx; centerY=cy; baseRadius=br; hatRadius=hr;
+        }
+
         public void draw(Canvas canvas,Paint paint){
             paint.setColor(Color.argb(100,200,200,200));
             canvas.drawCircle(centerX,centerY,baseRadius,paint);
-            float innerX=centerX+actuatorX*baseRadius, innerY=centerY+actuatorY*baseRadius;
+            float innerX=centerX+actuatorX*baseRadius;
+            float innerY=centerY+actuatorY*baseRadius;
             paint.setColor(Color.argb(200,100,200,255));
-            canvas.drawCircle(innerX, innerY, hatRadius, paint);}
-        public boolean isPressed(float tx,float ty){double d=Math.sqrt((tx-centerX)*(tx-centerX)+(ty-centerY)*(ty-centerY));return d<baseRadius;}
+            canvas.drawCircle(innerX, innerY, hatRadius, paint);
+        }
+
+        public boolean isPressed(float tx,float ty){
+            double d=Math.sqrt((tx-centerX)*(tx-centerX)+(ty-centerY)*(ty-centerY));
+            return d<baseRadius;
+        }
+
         public void setPressed(boolean p){isPressed=p;}
-        public void setActuator(float tx,float ty){float dx=tx-centerX, dy=ty-centerY;float d=(float)Math.sqrt(dx*dx+dy*dy);
-            if(d>baseRadius){dx=(dx/d)*baseRadius;dy=(dy/d)*baseRadius;} actuatorX=dx/baseRadius; actuatorY=dy/baseRadius;}
-        public void resetActuator(){ actuatorX=0; actuatorY=0;}
+
+        public void setActuator(float tx,float ty){
+            float dx=tx-centerX, dy=ty-centerY;
+            float d=(float)Math.sqrt(dx*dx+dy*dy);
+            if(d>baseRadius){
+                dx=(dx/d)*baseRadius;
+                dy=(dy/d)*baseRadius;
+            }
+            actuatorX=dx/baseRadius;
+            actuatorY=dy/baseRadius;
+        }
+
+        public void resetActuator(){ actuatorX=0; actuatorY=0; }
         public float getActuatorX(){return actuatorX;}
         public float getActuatorY(){return actuatorY;}
     }
