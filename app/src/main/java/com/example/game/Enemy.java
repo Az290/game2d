@@ -29,6 +29,8 @@ public class Enemy {
 
     // Zigzag/boss movement
     private float angle = 0;
+    private boolean escaped = false;
+    public boolean hasEscaped() { return escaped; }
 
     public Enemy(Context context, int screenWidth, int screenHeight, int type) {
         this.screenWidth = screenWidth;
@@ -81,54 +83,92 @@ public class Enemy {
     public boolean isDead() { return hp <= 0; }
 
     public void update() {
+        long now = System.currentTimeMillis();
+
         switch (type) {
-            case 0: // straight
+            case 0: // Straight mover
                 y += speedY;
+                // Attack: twin cyan bullets in V-shape
+                if (y > 100 && now - lastShot > cooldown) {
+                    bullets.add(new EnemyBullet(
+                            x + sprite.getFrameWidth()/2,
+                            y + sprite.getFrameHeight(),
+                            -3, 6, Color.CYAN, 12));
+                    bullets.add(new EnemyBullet(
+                            x + sprite.getFrameWidth()/2,
+                            y + sprite.getFrameHeight(),
+                            3, 6, Color.CYAN, 12));
+                    lastShot = now;
+                }
                 break;
-            case 1: // zigzag
+
+            case 1: // Zigzag mover
                 y += speedY;
                 angle += 0.1f;
-                x = (float)(screenWidth/2 + Math.sin(angle)*150);
-                break;
-            case 2: // shooter
-                y += speedY;
-                if(y>150) speedY=0; // dừng lại rồi bắn
-                long now = System.currentTimeMillis();
-                if(now-lastShot>cooldown){
-                    bullets.add(new EnemyBullet(x+sprite.getFrameWidth()/2, y+sprite.getFrameHeight(), 0, 6));
-                    lastShot=now;
-                }
-                break;
-            case 99: // boss
-                angle += 0.05f;
-                x = (float)(screenWidth/2 + Math.sin(angle)*200);
-                long now2=System.currentTimeMillis();
-                if(now2-lastShot>cooldown){
-                    for(int i=-2;i<=2;i++){
-                        bullets.add(new EnemyBullet(x+sprite.getFrameWidth()/2,
-                                y+sprite.getFrameHeight(), i*2, 7));
+                x = (float)(screenWidth/2 + Math.sin(angle) * 150);
+
+                // Attack: spread 3 magenta bullets
+                if (y > 100 && now - lastShot > cooldown) {
+                    for (int i = -1; i <= 1; i++) {
+                        bullets.add(new EnemyBullet(
+                                x + sprite.getFrameWidth()/2,
+                                y + sprite.getFrameHeight(),
+                                i * 4, 6, Color.MAGENTA, 14));
                     }
-                    lastShot=now2;
+                    lastShot = now;
+                }
+                break;
+
+            case 2: // Shooter
+                y += speedY;
+                if (y > 150) speedY = 0;
+
+                // Attack: single red bullet straight down
+                if (now - lastShot > cooldown) {
+                    bullets.add(new EnemyBullet(
+                            x + sprite.getFrameWidth()/2,
+                            y + sprite.getFrameHeight(),
+                            0, 6, Color.RED, 10));
+                    lastShot = now;
+                }
+                break;
+
+            case 99: // Boss
+                angle += 0.05f;
+                x = (float)(screenWidth/2 + Math.sin(angle) * 200);
+
+                // Attack: 5 orange bullets in spread
+                if (now - lastShot > cooldown) {
+                    for (int i = -2; i <= 2; i++) {
+                        bullets.add(new EnemyBullet(
+                                x + sprite.getFrameWidth()/2,
+                                y + sprite.getFrameHeight(),
+                                i * 2, 7, Color.rgb(255,100,0), 16));
+                    }
+                    lastShot = now;
                 }
                 break;
         }
 
-        // Clamp stay in screen
-        if(x<0) x=0;
-        if(x>screenWidth-sprite.getFrameWidth())
-            x=screenWidth-sprite.getFrameWidth();
-        if(y>screenHeight-sprite.getFrameHeight()) {
-            y=screenHeight-sprite.getFrameHeight();
-            speedY=0;
+        // Clamp ngang để không văng ngoài màn hình
+        if (x < 0) x = 0;
+        if (x > screenWidth - sprite.getFrameWidth())
+            x = screenWidth - sprite.getFrameWidth();
+
+        // Kiểm tra enemy thoát màn hình dưới (trừ máu player)
+        if ((type == 0 || type == 1) && y > screenHeight) {
+            escaped = true;
+            hp = 0; // để remove
         }
 
+        // Update sprite
         sprite.update();
 
-        // update bullet
-        for(int i=bullets.size()-1;i>=0;i--){
-            EnemyBullet b=bullets.get(i);
+        // Update bullets
+        for (int i = bullets.size() - 1; i >= 0; i--) {
+            EnemyBullet b = bullets.get(i);
             b.update();
-            if(!b.isActive()) bullets.remove(i);
+            if (!b.isActive()) bullets.remove(i);
         }
     }
 
@@ -162,14 +202,44 @@ public class Enemy {
 
 /** Bullet Class */
 class EnemyBullet {
-    float x,y,vx,vy; int size=10; boolean active=true;
+    float x, y, vx, vy;
+    int size;
+    boolean active = true;
+    int color;
 
-    EnemyBullet(float x,float y,float vx,float vy){
-        this.x=x;this.y=y;this.vx=vx;this.vy=vy;
+    // Constructor mặc định (giữ tương thích cũ)
+    EnemyBullet(float x, float y, float vx, float vy) {
+        this(x, y, vx, vy, Color.RED, 10);
     }
 
-    public void update(){ x+=vx;y+=vy; if(y>2000) active=false; }
-    public void draw(Canvas c,Paint p){ if(!active)return; p.setColor(Color.RED); c.drawCircle(x,y,size,p); }
-    public Rect getRect(){ return new Rect((int)(x-size),(int)(y-size),(int)(x+size),(int)(y+size)); }
-    public boolean isActive(){return active;}
+    // Constructor mới với màu + size tuỳ biến
+    EnemyBullet(float x, float y, float vx, float vy, int color, int size) {
+        this.x = x;
+        this.y = y;
+        this.vx = vx;
+        this.vy = vy;
+        this.color = color;
+        this.size = size;
+    }
+
+    public void update() {
+        x += vx;
+        y += vy;
+        if (y > 2200 || y < -100 || x < -200 || x > 2200) {
+            active = false;
+        }
+    }
+
+    public void draw(Canvas c, Paint p) {
+        if (!active) return;
+        p.setColor(color);
+        c.drawCircle(x, y, size, p);
+    }
+
+    public Rect getRect() {
+        return new Rect((int)(x - size), (int)(y - size),
+                (int)(x + size), (int)(y + size));
+    }
+
+    public boolean isActive() { return active; }
 }

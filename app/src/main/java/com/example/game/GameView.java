@@ -208,6 +208,31 @@ public class GameView extends SurfaceView implements Runnable {
 
         // Wave update
         waveManager.update();
+        // === Check enemy lọt khỏi màn hình (type 0,1) ===
+        for (Enemy e : new ArrayList<>(waveManager.getActiveEnemies())) {
+            if (e.hasEscaped()) {
+                // Enemy lọt thành công -> trừ máu player
+                int dmg = 20; // Bạn chỉnh con số này để cân bằng gameplay
+                dmg = armorBuff.reduceDamage(dmg);
+
+                playerHp -= dmg;
+
+                // Hiệu ứng nổ nhỏ cho feedback
+                explosions.add(new Explosion(getContext(),
+                        R.drawable.explosion_sheet,
+                        e.getX(), e.getY(), 9));
+
+                // Remove enemy
+                waveManager.getActiveEnemies().remove(e);
+
+                // Nếu HP <= 0 -> Game Over
+                if (playerHp <= 0) {
+                    playerHp = 0;
+                    isGameOver = true;
+                    isPlaying = false;
+                }
+            }
+        }
 
         // Explosions update
         for (int i = explosions.size() - 1; i >= 0; i--) {
