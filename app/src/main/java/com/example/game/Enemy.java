@@ -40,7 +40,7 @@ public class Enemy {
         // Load sprite theo loại
         switch (type) {
             case 0: // Straight
-                sprite = new Sprite(context, R.drawable.enemy, 6, 6, 0.7f);
+                sprite = new Sprite(context, R.drawable.enemy, 1, 1, 0.35f);
                 maxHp = 100; xpValue = 20;
                 break;
             case 1: // Zigzag
@@ -48,7 +48,7 @@ public class Enemy {
                 maxHp = 120; xpValue = 30;
                 break;
             case 2: // Shooter
-                sprite = new Sprite(context, R.drawable.enemy3, 1, 6, 0.5f);
+                sprite = new Sprite(context, R.drawable.enemy3, 1, 1, 0.1f);
                 maxHp = 150; xpValue = 40;
                 cooldown = 1200;
                 break;
